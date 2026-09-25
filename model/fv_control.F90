@@ -401,6 +401,12 @@ module fv_control_mod
 !The following is used for SA-3D-TKE
      logical , pointer :: sa3dtke_dyco
 
+!The following is used for Leonard term
+     logical , pointer :: leonard_dyco
+
+!The following is used for cold pool advection term
+     logical , pointer :: coldpool_dyco
+
      real(kind=R_GRID), pointer :: dx_const
      real(kind=R_GRID), pointer :: dy_const
      real(kind=R_GRID), pointer :: deglon_start, deglon_stop, &  ! boundaries of latlon patch
@@ -413,7 +419,6 @@ module fv_control_mod
      logical, pointer :: regional
      integer, pointer :: bc_update_interval
      integer, pointer :: nrows_blend
-     logical, pointer :: var_grav
      logical, pointer :: regional_bcs_from_gsi
      logical, pointer :: write_restart_with_bcs
      integer, pointer :: parent_tile, refinement, nestbctype, nestupdate, upoff, nsponge, ioffset, joffset
@@ -883,7 +888,6 @@ module fv_control_mod
        regional                      => Atm%flagstruct%regional
        bc_update_interval            => Atm%flagstruct%bc_update_interval
        nrows_blend                   => Atm%flagstruct%nrows_blend
-       var_grav                      => Atm%flagstruct%var_grav
        regional_bcs_from_gsi         => Atm%flagstruct%regional_bcs_from_gsi
        write_restart_with_bcs        => Atm%flagstruct%write_restart_with_bcs
        reset_eta                     => Atm%flagstruct%reset_eta
@@ -972,6 +976,12 @@ module fv_control_mod
 
 !The following is used for SA-3D-TKE
        sa3dtke_dyco                  => Atm%flagstruct%sa3dtke_dyco
+
+!The following is used for Leonard term
+       leonard_dyco                  => Atm%flagstruct%leonard_dyco
+
+!The following is used for Leonard term
+       coldpool_dyco                  => Atm%flagstruct%coldpool_dyco
 
        hydrostatic                   => Atm%flagstruct%hydrostatic
        phys_hydrostatic              => Atm%flagstruct%phys_hydrostatic
@@ -1104,7 +1114,7 @@ module fv_control_mod
             consv_te, fill, filter_phys, fill_dp, fill_wz, fill_gfs, consv_am, RF_fast, &
             range_warn, dwind_2d, inline_q, z_tracer, reproduce_sum, adiabatic, do_vort_damp, no_dycore,   &
             tau, tau_w, fast_tau_w_sec, tau_h2o, rf_cutoff, rf_cutoff_w, nf_omega, hydrostatic, fv_sg_adj, sg_cutoff, breed_vortex_inline,  &
-            sa3dtke_dyco, &
+            sa3dtke_dyco, leonard_dyco, coldpool_dyco, &
             na_init, nudge_dz, hybrid_z, Make_NH, n_zs_filter, nord_zs_filter, full_zs_filter, reset_eta,         &
             pnats, dnats, dnrts, a2b_ord, remap_t, p_ref, d2_bg_k1, d2_bg_k2,  &
             c2l_ord, dx_const, dy_const, umax, deglat, deglon, deg_domain,      &
@@ -1114,7 +1124,7 @@ module fv_control_mod
             nestbctype, nestupdate, upoff, nsponge, s_weight, &
             check_negative, nudge_ic, halo_update_type, gfs_phil, agrid_vel_rst,     &
             do_uni_zfull, adj_mass_vmr, fac_n_spl, fhouri, update_blend, regional, bc_update_interval,  &
-            regional_bcs_from_gsi, write_restart_with_bcs, nrows_blend, var_grav, &
+            regional_bcs_from_gsi, write_restart_with_bcs, nrows_blend,  &
             write_coarse_restart_files,&
             write_coarse_diagnostics,&
             write_only_coarse_intermediate_restarts, &

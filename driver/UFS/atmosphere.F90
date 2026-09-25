@@ -297,9 +297,10 @@ contains
 !! and diagnostics.
  subroutine atmosphere_init (Time_init, Time, Time_step, Grid_box, area)
 
-   use ufs_ccpp_cap,      only: ccpp_physics_init, ccpp_register, ccpp_init
-   use CCPP_driver,       only: ccpp_suite, errmsg, errflg
-   use CCPP_data,         only: GFDL_interstitial
+   use ccpp_static_api,   only: ccpp_physics_init
+   use CCPP_data,         only: ccpp_suite,          &
+                                cdata => cdata_tile, &
+                                GFDL_interstitial
 #ifdef OPENMP
    use omp_lib
 #endif
@@ -308,7 +309,7 @@ contains
    type(grid_box_type), intent(inout) :: Grid_box
    real(kind=kind_phys), pointer, dimension(:,:), intent(inout) :: area
 !--- local variables ---
-   integer :: i, n, j, k
+   integer :: i, n
 !  integer :: itrac
    logical :: do_atmos_nudge
    character(len=32) :: tracer_name, tracer_units
@@ -498,6 +499,12 @@ contains
 
    ! Do CCPP fast physics initialization before call to adiabatic_init (since this calls fv_dynamics)
 
+   ! For fast physics running over the entire domain, block
+   ! and thread number are not used; set to safe values
+   cdata%blk_no = 1
+   cdata%thrd_no = 1
+   cdata%thrd_cnt = 1
+
    ! Create shared data type for fast and slow physics, one for each thread
 #ifdef OPENMP
    nthreads = omp_get_max_threads()
@@ -532,25 +539,11 @@ contains
                                  mpirank=mpp_pe(), mpiroot=mpp_root_pe())
 
    if (Atm(mygrid)%flagstruct%do_sat_adj) then
-      ! Register fast-physics
-      call ccpp_register(ccpp_suite=trim(ccpp_suite), errflg=errflg, errmsg=errmsg)
-      if (errflg/=0) then
-         errmsg = ' atmosphere_dynamics: error in ccpp_register for group fast_physics: ' // trim(errmsg)
-         call mpp_error (FATAL, errmsg)
-      endif
-      ! Initialize ccpp
-      call ccpp_init(ccpp_suite=trim(ccpp_suite), errmsg=errmsg, errflg=errflg)
-      if (errflg/=0) then
-         errmsg = ' atmosphere_dynamics: error in ccpp_init for group fast_physics: ' // trim(errmsg)
-         call mpp_error (FATAL, errmsg)
-      endif
       ! Initialize fast physics
-      call ccpp_physics_init(ccpp_suite=trim(ccpp_suite), group_name='fast_physics', &
-           lb=Atm(mygrid)%bd%is, ub=Atm(mygrid)%bd%ie, mythread=1, &
-           nthreads=1, nphys_threads=1, errflg=errflg, errmsg=errmsg)
-      if (errflg/=0) then
-         errmsg = ' atmosphere_dynamics: error in ccpp_physics_init for group fast_physics: ' // trim(errmsg)
-         call mpp_error (FATAL, errmsg)
+      call ccpp_physics_init(cdata, suite_name=trim(ccpp_suite), group_name="fast_physics", ierr=ierr)
+      if (ierr/=0) then
+         cdata%errmsg = ' atmosphere_dynamics: error in ccpp_physics_init for group fast_physics: ' // trim(cdata%errmsg)
+         call mpp_error (FATAL, cdata%errmsg)
       endif
    endif
 
@@ -711,13 +704,17 @@ contains
                       Atm(n)%vc,                                                &
 !The following variable is used for SA-3D-TKE (kyf) (modify for data structure)
                       Atm(n)%sa3dtke_var,                                       &
+!The following variable is used for Leonard term (jhan) (modify for data structure)
+                      Atm(n)%leonard_var,                                       &
+!The following variable is used for cold pool advection term (jhan) (modify for data structure)
+                      Atm(n)%coldpool_var,                                      &
                       Atm(n)%ak,    Atm(n)%bk, Atm(n)%mfx,                      &
                       Atm(n)%mfy , Atm(n)%cx,    Atm(n)%cy, Atm(n)%ze0,         &
                       Atm(n)%flagstruct%hybrid_z,                               &
                       Atm(n)%gridstruct,  Atm(n)%flagstruct,                    &
                       Atm(n)%neststruct,  Atm(n)%idiag, Atm(n)%bd,              &
                       Atm(n)%parent_grid, Atm(n)%domain,Atm(n)%diss_est,        &
-                      Atm(n)%inline_mp, Atm(n)%grav_var_h, Atm(n)%grav_var)
+                      Atm(n)%inline_mp)
 
      call timing_off('fv_dynamics')
 
@@ -775,7 +772,7 @@ contains
                         Atm(n)%peln, Atm(n)%pkz, Atm(n)%pt, Atm(n)%q,       &
                         Atm(n)%ua, Atm(n)%va, Atm(n)%flagstruct%hydrostatic,&
                         Atm(n)%w, Atm(n)%delz, u_dt, v_dt, t_dt,            &
-                        Atm(n)%flagstruct%n_sponge, Atm(n)%grav_var)
+                        Atm(n)%flagstruct%n_sponge)
     endif
 
 #ifdef USE_Q_DT
@@ -817,8 +814,9 @@ contains
 !! FV3 dynamical core responsible for writing out a restart and final diagnostic state.
  subroutine atmosphere_end (Time, Grid_box, restart_endfcst)
 
-   use ufs_ccpp_cap,      only: ccpp_physics_final
-   use CCPP_driver,       only: ccpp_suite, errmsg, errflg
+   use ccpp_static_api,   only: ccpp_physics_finalize
+   use CCPP_data,         only: ccpp_suite
+   use CCPP_data,         only: cdata => cdata_tile
 
    type (time_type),      intent(in)    :: Time
    type(grid_box_type),   intent(inout) :: Grid_box
@@ -827,12 +825,10 @@ contains
 
    if (Atm(mygrid)%flagstruct%do_sat_adj) then
       ! Finalize fast physics
-      call ccpp_physics_final(ccpp_suite=trim(ccpp_suite), group_name='fast_physics', &
-           lb=Atm(mygrid)%bd%is, ub=Atm(mygrid)%bd%ie, mythread=1, &
-           nthreads=1, nphys_threads=1, errflg=errflg, errmsg=errmsg)
-      if (errflg/=0) then
-         errmsg = ' atmosphere_dynamics: error in ccpp_physics_finalize for group fast_physics: ' // trim(errmsg)
-         call mpp_error (FATAL, errmsg)
+      call ccpp_physics_finalize(cdata, suite_name=trim(ccpp_suite), group_name="fast_physics", ierr=ierr)
+      if (ierr/=0) then
+         cdata%errmsg = ' atmosphere_dynamics: error in ccpp_physics_finalize for group fast_physics: ' // trim(cdata%errmsg)
+         call mpp_error (FATAL, cdata%errmsg)
       endif
    endif
 
@@ -1072,7 +1068,7 @@ contains
      !--- generate dz using hydrostatic assumption
      do j = jsc, jec
        do i = isc, iec
-         dz(i-isc+1,j-jsc+1,1:npz) = (rdgas/Atm(mygrid)%grav_var(i,j,1:npz))*Atm(mygrid)%pt(i,j,1:npz)  &
+         dz(i-isc+1,j-jsc+1,1:npz) = (rdgas/grav)*Atm(mygrid)%pt(i,j,1:npz)  &
                          * (Atm(mygrid)%peln(i,1:npz,j) - Atm(mygrid)%peln(i,2:npz+1,j))
        enddo
      enddo
@@ -1916,11 +1912,15 @@ contains
                      Atm(mygrid)%q_con, Atm(mygrid)%omga, Atm(mygrid)%ua, Atm(mygrid)%va, Atm(mygrid)%uc, Atm(mygrid)%vc, &
 !The following variable is used for SA-3D-TKE (kyf) (modify for data structure)
                      Atm(mygrid)%sa3dtke_var,                   &
+!The following variable is used for Leonard term (jhan) (modify for data structure)
+                     Atm(mygrid)%leonard_var,                                       &
+!The following variable is used for cold pool advection term (jhan) (modify for data structure)
+                     Atm(mygrid)%coldpool_var,                                       &
                      Atm(mygrid)%ak, Atm(mygrid)%bk, Atm(mygrid)%mfx, Atm(mygrid)%mfy,                    &
                      Atm(mygrid)%cx, Atm(mygrid)%cy, Atm(mygrid)%ze0, Atm(mygrid)%flagstruct%hybrid_z,    &
                      Atm(mygrid)%gridstruct, Atm(mygrid)%flagstruct,                            &
                      Atm(mygrid)%neststruct, Atm(mygrid)%idiag, Atm(mygrid)%bd, Atm(mygrid)%parent_grid,  &
-                     Atm(mygrid)%domain,Atm(mygrid)%diss_est, Atm(mygrid)%inline_mp, Atm(mygrid)%grav_var_h, Atm(mygrid)%grav_var)
+                     Atm(mygrid)%domain,Atm(mygrid)%diss_est, Atm(mygrid)%inline_mp)
 ! Backward
     call fv_dynamics(Atm(mygrid)%npx, Atm(mygrid)%npy, npz,  nq, Atm(mygrid)%ng, -dt_atmos, 0.,      &
                      Atm(mygrid)%flagstruct%fill, Atm(mygrid)%flagstruct%reproduce_sum, kappa, cp_air, zvir,  &
@@ -1933,11 +1933,15 @@ contains
                      Atm(mygrid)%q_con, Atm(mygrid)%omga, Atm(mygrid)%ua, Atm(mygrid)%va, Atm(mygrid)%uc, Atm(mygrid)%vc, &
 !The following three variables are used for SA-3D-TKE (kyf) (modify for data structure)
                      Atm(mygrid)%sa3dtke_var,          &
+!The following variable is used for Leonard term (jhan) (modify for data structure)
+                     Atm(mygrid)%leonard_var,                                       &
+!The following variable is used for cold pool advection term (jhan) (modify for data structure)
+                     Atm(mygrid)%coldpool_var,                                       &
                      Atm(mygrid)%ak, Atm(mygrid)%bk, Atm(mygrid)%mfx, Atm(mygrid)%mfy,                    &
                      Atm(mygrid)%cx, Atm(mygrid)%cy, Atm(mygrid)%ze0, Atm(mygrid)%flagstruct%hybrid_z,    &
                      Atm(mygrid)%gridstruct, Atm(mygrid)%flagstruct,                            &
                      Atm(mygrid)%neststruct, Atm(mygrid)%idiag, Atm(mygrid)%bd, Atm(mygrid)%parent_grid,  &
-                     Atm(mygrid)%domain,Atm(mygrid)%diss_est, Atm(mygrid)%inline_mp, Atm(mygrid)%grav_var_h, Atm(mygrid)%grav_var)
+                     Atm(mygrid)%domain,Atm(mygrid)%diss_est, Atm(mygrid)%inline_mp)
 !Nudging back to IC
 !$omp parallel do default (none) &
 !$omp              shared (pref, npz, jsc, jec, isc, iec, n, sphum, Atm, u0, v0, t0, dp0, xt, zvir, mygrid, nudge_dz, dz0) &
@@ -2011,11 +2015,15 @@ contains
                      Atm(mygrid)%q_con, Atm(mygrid)%omga, Atm(mygrid)%ua, Atm(mygrid)%va, Atm(mygrid)%uc, Atm(mygrid)%vc, &
 !The following three variables are used for SA-3D-TKE (kyf) (modify for data structure)
                      Atm(mygrid)%sa3dtke_var,       &
+!The following variable is used for Leonard term (jhan) (modify for data structure)
+                     Atm(mygrid)%leonard_var,                                       &
+!The following variable is used for cold pool advection term (jhan) (modify for data structure)
+                     Atm(mygrid)%coldpool_var,                                       &
                      Atm(mygrid)%ak, Atm(mygrid)%bk, Atm(mygrid)%mfx, Atm(mygrid)%mfy,                    &
                      Atm(mygrid)%cx, Atm(mygrid)%cy, Atm(mygrid)%ze0, Atm(mygrid)%flagstruct%hybrid_z,    &
                      Atm(mygrid)%gridstruct, Atm(mygrid)%flagstruct,                            &
                      Atm(mygrid)%neststruct, Atm(mygrid)%idiag, Atm(mygrid)%bd, Atm(mygrid)%parent_grid,  &
-                     Atm(mygrid)%domain,Atm(mygrid)%diss_est, Atm(mygrid)%inline_mp, Atm(mygrid)%grav_var_h, Atm(mygrid)%grav_var)
+                     Atm(mygrid)%domain,Atm(mygrid)%diss_est, Atm(mygrid)%inline_mp)
 ! Forward call
     call fv_dynamics(Atm(mygrid)%npx, Atm(mygrid)%npy, npz,  nq, Atm(mygrid)%ng, dt_atmos, 0.,      &
                      Atm(mygrid)%flagstruct%fill, Atm(mygrid)%flagstruct%reproduce_sum, kappa, cp_air, zvir,  &
@@ -2027,11 +2035,15 @@ contains
                      Atm(mygrid)%q_con, Atm(mygrid)%omga, Atm(mygrid)%ua, Atm(mygrid)%va, Atm(mygrid)%uc, Atm(mygrid)%vc, &
 !The following three variables are used for SA-3D-TKE (kyf) (modify for data structure)
                      Atm(mygrid)%sa3dtke_var,       &
+!The following variable is used for Leonard term (jhan) (modify for data structure)
+                     Atm(mygrid)%leonard_var,                                       &
+!The following variable is used for cold pool advection term (jhan) (modify for data structure)
+                     Atm(mygrid)%coldpool_var,                                       &
                      Atm(mygrid)%ak, Atm(mygrid)%bk, Atm(mygrid)%mfx, Atm(mygrid)%mfy,                    &
                      Atm(mygrid)%cx, Atm(mygrid)%cy, Atm(mygrid)%ze0, Atm(mygrid)%flagstruct%hybrid_z,    &
                      Atm(mygrid)%gridstruct, Atm(mygrid)%flagstruct,                            &
                      Atm(mygrid)%neststruct, Atm(mygrid)%idiag, Atm(mygrid)%bd, Atm(mygrid)%parent_grid,  &
-                     Atm(mygrid)%domain,Atm(mygrid)%diss_est, Atm(mygrid)%inline_mp, Atm(mygrid)%grav_var_h, Atm(mygrid)%grav_var)
+                     Atm(mygrid)%domain,Atm(mygrid)%diss_est, Atm(mygrid)%inline_mp)
 ! Nudging back to IC
 !$omp parallel do default (none) &
 !$omp              shared (nudge_dz,npz, jsc, jec, isc, iec, n, sphum, Atm, u0, v0, t0, dz0, dp0, xt, zvir, mygrid) &
@@ -2181,6 +2193,16 @@ contains
           enddo
         enddo
        endif
+!The following is for cold pool parameterization
+       if(Atm(mygrid)%flagstruct%coldpool_dyco) then
+         do ix = 1, blen
+           i = Atm_block%index(nb)%ii(ix)
+           j = Atm_block%index(nb)%jj(ix)
+           im = IPD_control%chunk_begin(nb)+ix-1
+           Atm(mygrid)%coldpool_var%ucp(i,j) = IPD_Tbd%ucp(im)
+           Atm(mygrid)%coldpool_var%vcp(i,j) = IPD_Tbd%vcp(im)
+         enddo
+       endif
 
      do k = 1, npz
        !Indices for FV's vertical coordinate, for which 1 = top
@@ -2210,16 +2232,29 @@ contains
           IPD_Statein%def_1(im,k) = _DBL_(_RL_(Atm(mygrid)%sa3dtke_var%deform_1(i,j,k1)))
           IPD_Statein%def_2(im,k) = _DBL_(_RL_(Atm(mygrid)%sa3dtke_var%deform_2(i,j,k1)))
           IPD_Statein%def_3(im,k) = _DBL_(_RL_(Atm(mygrid)%sa3dtke_var%deform_3(i,j,k1)))
+          IPD_Statein%def_4(im,k,1:nq) = _DBL_(_RL_(Atm(mygrid)%sa3dtke_var%deform_4(i,j,k1,1:nq)))
+         endif
+
+!The following is for Leonard term (jhan) (modify for data structure)
+         if(Atm(mygrid)%flagstruct%leonard_dyco) then
+          IPD_Statein%leo_u(im,k) = _DBL_(_RL_(Atm(mygrid)%leonard_var%leonrd_u(i,j,k1)))
+          IPD_Statein%leo_v(im,k) = _DBL_(_RL_(Atm(mygrid)%leonard_var%leonrd_v(i,j,k1)))
+          IPD_Statein%leo_t(im,k) = _DBL_(_RL_(Atm(mygrid)%leonard_var%leonrd_t(i,j,k1)))
+          IPD_Statein%leo_q(im,k,1:nq) = _DBL_(_RL_(Atm(mygrid)%leonard_var%leonrd_q(i,j,k1,1:nq)))
+         endif
+!The following variable is used for cold pool advection term (jhan) (modify for data structure)
+         if(Atm(mygrid)%flagstruct%coldpool_dyco) then
+          IPD_Statein%cpadv(im,k) = _DBL_(_RL_(Atm(mygrid)%coldpool_var%cpadv(i,j,k1)))
          endif
 
          if (Atm(mygrid)%flagstruct%do_skeb) IPD_Statein%diss_est(im,k) = _DBL_(_RL_(Atm(mygrid)%diss_est(i,j,k1)))
 
          if(flip_vc) then
            if (.not.Atm(mygrid)%flagstruct%hydrostatic .and. (.not.Atm(mygrid)%flagstruct%use_hydro_pressure))  &
-             IPD_Statein%phii(im,k+1) = IPD_Statein%phii(im,k) - _DBL_(_RL_(Atm(mygrid)%delz(i,j,k1)*Atm(mygrid)%grav_var(i,j,k1)))
+             IPD_Statein%phii(im,k+1) = IPD_Statein%phii(im,k) - _DBL_(_RL_(Atm(mygrid)%delz(i,j,k1)*grav))
          else
            if (.not.Atm(mygrid)%flagstruct%hydrostatic .and. (.not.Atm(mygrid)%flagstruct%use_hydro_pressure))  &
-             IPD_Statein%phii(im,kz) = IPD_Statein%phii(im,kz+1) - _DBL_(_RL_(Atm(mygrid)%delz(i,j,kz)*Atm(mygrid)%grav_var(i,j,kz)))
+             IPD_Statein%phii(im,kz) = IPD_Statein%phii(im,kz+1) - _DBL_(_RL_(Atm(mygrid)%delz(i,j,kz)*grav))
          endif
 
 ! Convert to tracer mass:
