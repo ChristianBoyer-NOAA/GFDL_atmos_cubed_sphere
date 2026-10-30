@@ -943,6 +943,7 @@ module fv_arrays_mod
   logical :: var_grav = .false.  ! apply variable gravity (4D) to simulations
 !This logical variable is used for SA-3D-TKE
      logical :: sa3dtke_dyco = .false.
+     logical :: hdiffq_dyco = .false.
 
 !This logical variable is used for Leonard term in turbulent fluxes
      logical :: leonard_dyco = .false.

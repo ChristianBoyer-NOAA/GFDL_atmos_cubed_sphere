@@ -2504,11 +2504,12 @@ subroutine diff3d(npx, npy, npz, nq, ua, va, w, tx, q,    &
 !===========================================================
 ! KGao: make the 2d temporay arrays private - as suggested by Lucas
 
+   if(hdiffq) then
+!
 !$OMP parallel do default(none) shared(npz,is,ie,js,je,tx,dx,dy,rarea, &
-!$OMP                 hdiffq,delp,deform_3,dku3d_e) &
+!$OMP                              delp,deform_3,dku3d_e) &
 !$OMP                           private(k,i,j,ut,vt,tmp,tmp1, &
 !$OMP                              kqdtdy,dkqdtdydy,kqdtdx,dkqdtdxdx)
-   if(hdiffq) then
    do k=1,npz
 !-------------------------------------
        do j=js-1,je+1
@@ -2564,6 +2565,7 @@ subroutine diff3d(npx, npy, npz, nq, ua, va, w, tx, q,    &
           enddo
        enddo
    enddo ! z loop
+!
    endif
 
 !===========================================================
@@ -2576,11 +2578,12 @@ subroutine diff3d(npx, npy, npz, nq, ua, va, w, tx, q,    &
 
 ! KGao: make the 2d temporay arrays private - as suggested by Lucas
 
+   if(hdiffq) then
+!
 !$OMP parallel do default(none) shared(npz,is,ie,js,je,nq,q,dx,dy,rarea, &
-!$OMP                hdiffq,delp,sgs_tke,deform_4,dku3d_e) &
+!$OMP                              delp,deform_4,dku3d_e) &
 !$OMP                           private(iq,k,i,j,ut,vt,tmp,tmp1, &
 !$OMP                              kqdtdy,dkqdtdydy,kqdtdx,dkqdtdxdx)
-   if(hdiffq) then
    do iq=1,nq
    do k=1,npz
 !-------------------------------------
@@ -2641,6 +2644,10 @@ subroutine diff3d(npx, npy, npz, nq, ua, va, w, tx, q,    &
 !
    else
 !
+!$OMP parallel do default(none) shared(npz,is,ie,js,je,nq,q,dx,dy,rarea, &
+!$OMP                              delp,sgs_tke,deform_4,dku3d_e) &
+!$OMP                           private(iq,k,i,j,ut,vt,tmp,tmp1, &
+!$OMP                              kqdtdy,dkqdtdydy,kqdtdx,dkqdtdxdx)
    do k=1,npz
 !-------------------------------------
        do j=js-1,je+1
@@ -2696,6 +2703,7 @@ subroutine diff3d(npx, npy, npz, nq, ua, va, w, tx, q,    &
        enddo
        enddo
    enddo ! z loop
+!
    endif
 
 end subroutine diff3d
