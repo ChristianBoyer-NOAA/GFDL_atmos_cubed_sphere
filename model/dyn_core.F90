@@ -1503,6 +1503,7 @@ contains
        call mpp_update_domains(sa3dtke_var%dku3d_e(:,:,:), domain, complete=.true.) ! update dku3d_e at halo
 
        call diff3d(npx, npy, npz, nq, ua, va, w, tx, q,       &
+                  flagstruct%hdiffq_dyco, delp,               &
                   sa3dtke_var%deform_1, sa3dtke_var%deform_2, &
                   sa3dtke_var%deform_3, sa3dtke_var%deform_4, &
                   sa3dtke_var%dku3d_e, zh, gridstruct, bd)
@@ -2299,6 +2300,7 @@ end subroutine one_grad_p
 
 !The following is for SA-3D-TKE
 subroutine diff3d(npx, npy, npz, nq, ua, va, w, tx, q,    &
+                  hdiffq, delp,                           &
                   deform_1, deform_2, deform_3, deform_4, &
                   dku3d_e, zh, gridstruct, bd)
 
@@ -2306,6 +2308,7 @@ subroutine diff3d(npx, npy, npz, nq, ua, va, w, tx, q,    &
 
     integer, intent(in) :: nq, npx, npy, npz
     type(fv_grid_bounds_type), intent(IN) :: bd
+    logical, intent(in) :: hdiffq
     real, intent(in) ::     ua(bd%isd:bd%ied, bd%jsd:bd%jed, npz)
     real, intent(in) ::     va(bd%isd:bd%ied, bd%jsd:bd%jed, npz)
     real, intent(in) ::      w(bd%isd:bd%ied, bd%jsd:bd%jed, npz)
@@ -2326,6 +2329,8 @@ subroutine diff3d(npx, npy, npz, nq, ua, va, w, tx, q,    &
 
     real, pointer, dimension(:,:) :: dx, dy, rarea
     integer :: is, ie, js, je, isd, ied, jsd, jed, i, j, k, iq
+    integer :: sgs_tke
+
     real:: dudx(bd%isd:bd%ied,bd%jsd:bd%jed,npz)
     real:: dudy(bd%isd:bd%ied,bd%jsd:bd%jed,npz)
     real:: dvdx(bd%isd:bd%ied,bd%jsd:bd%jed,npz)
@@ -2500,9 +2505,10 @@ subroutine diff3d(npx, npy, npz, nq, ua, va, w, tx, q,    &
 ! KGao: make the 2d temporay arrays private - as suggested by Lucas
 
 !$OMP parallel do default(none) shared(npz,is,ie,js,je,tx,dx,dy,rarea, &
-!$OMP                 deform_3,dku3d_e) &
-!$OMP                           private(k,i,j,ut,vt,tmp, &
+!$OMP                 hdiffq,delp,deform_3,dku3d_e) &
+!$OMP                           private(k,i,j,ut,vt,tmp,tmp1, &
 !$OMP                              kqdtdy,dkqdtdydy,kqdtdx,dkqdtdxdx)
+   if(hdiffq) then
    do k=1,npz
 !-------------------------------------
        do j=js-1,je+1
@@ -2513,7 +2519,8 @@ subroutine diff3d(npx, npy, npz, nq, ua, va, w, tx, q,    &
        do j=js-1,je
           do i=is,ie
              tmp = 0.5*(dku3d_e(i,j,k)+dku3d_e(i,j+1,k))
-             kqdtdy(i,j,k)=rarea(i,j)*tmp*(vt(i,j+1)-vt(i,j))
+             tmp1 = 0.5*(delp(i,j,k)+delp(i,j+1,k))
+             kqdtdy(i,j,k)=rarea(i,j)*tmp*tmp1*(vt(i,j+1)-vt(i,j))
           enddo
        enddo
        do j=js-1,je
@@ -2535,7 +2542,8 @@ subroutine diff3d(npx, npy, npz, nq, ua, va, w, tx, q,    &
        do j=js,je
           do i=is-1,ie
              tmp = 0.5*(dku3d_e(i,j,k)+dku3d_e(i+1,j,k))
-             kqdtdx(i,j,k)=rarea(i,j)*tmp*(ut(i+1,j)-ut(i,j))
+             tmp1 = 0.5*(delp(i,j,k)+delp(i+1,j,k))
+             kqdtdx(i,j,k)=rarea(i,j)*tmp*tmp1*(ut(i+1,j)-ut(i,j))
           enddo
        enddo
        do j=js,je
@@ -2552,21 +2560,27 @@ subroutine diff3d(npx, npy, npz, nq, ua, va, w, tx, q,    &
        do j=js,je
           do i=is,ie
              deform_3(i,j,k)=dkqdtdxdx(i,j,k)+dkqdtdydy(i,j,k)
+             deform_3(i,j,k)=deform_3(i,j,k)/delp(i,j,k)
           enddo
        enddo
    enddo ! z loop
+   endif
 
 !===========================================================
 ! Calculate deform_4
 ! deform_4 = d(kqdt/dx)/dx + d(kqdt/dy)/dy
 ! where t is moisture, condensate, tracers, or tke
 !===========================================================
+
+   sgs_tke = get_tracer_index(MODEL_ATMOS, 'sgs_tke')
+
 ! KGao: make the 2d temporay arrays private - as suggested by Lucas
 
 !$OMP parallel do default(none) shared(npz,is,ie,js,je,nq,q,dx,dy,rarea, &
-!$OMP                deform_4,dku3d_e) &
-!$OMP                           private(iq,k,i,j,ut,vt,tmp, &
+!$OMP                hdiffq,delp,sgs_tke,deform_4,dku3d_e) &
+!$OMP                           private(iq,k,i,j,ut,vt,tmp,tmp1, &
 !$OMP                              kqdtdy,dkqdtdydy,kqdtdx,dkqdtdxdx)
+   if(hdiffq) then
    do iq=1,nq
    do k=1,npz
 !-------------------------------------
@@ -2578,7 +2592,8 @@ subroutine diff3d(npx, npy, npz, nq, ua, va, w, tx, q,    &
        do j=js-1,je
           do i=is,ie
              tmp = 0.5*(dku3d_e(i,j,k)+dku3d_e(i,j+1,k))
-             kqdtdy(i,j,k)=rarea(i,j)*tmp*(vt(i,j+1)-vt(i,j))
+             tmp1 = 0.5*(delp(i,j,k)+delp(i,j+1,k))
+             kqdtdy(i,j,k)=rarea(i,j)*tmp*tmp1*(vt(i,j+1)-vt(i,j))
           enddo
        enddo
        do j=js-1,je
@@ -2600,7 +2615,8 @@ subroutine diff3d(npx, npy, npz, nq, ua, va, w, tx, q,    &
        do j=js,je
           do i=is-1,ie
              tmp = 0.5*(dku3d_e(i,j,k)+dku3d_e(i+1,j,k))
-             kqdtdx(i,j,k)=rarea(i,j)*tmp*(ut(i+1,j)-ut(i,j))
+             tmp1 = 0.5*(delp(i,j,k)+delp(i+1,j,k))
+             kqdtdx(i,j,k)=rarea(i,j)*tmp*tmp1*(ut(i+1,j)-ut(i,j))
           enddo
        enddo
        do j=js,je
@@ -2617,10 +2633,70 @@ subroutine diff3d(npx, npy, npz, nq, ua, va, w, tx, q,    &
        do j=js,je
           do i=is,ie
              deform_4(i,j,k,iq)=dkqdtdxdx(i,j,k)+dkqdtdydy(i,j,k)
+             deform_4(i,j,k,iq)=deform_4(i,j,k,iq)/delp(i,j,k)
           enddo
        enddo
    enddo ! z loop
    enddo ! iq loop
+!
+   else
+!
+   do k=1,npz
+!-------------------------------------
+       do j=js-1,je+1
+          do i=is,ie
+             vt(i,j)=q(i,j,k,sgs_tke)*dx(i,j)
+          enddo
+       enddo
+       do j=js-1,je
+          do i=is,ie
+             tmp = 0.5*(dku3d_e(i,j,k)+dku3d_e(i,j+1,k))
+             tmp1 = 0.5*(delp(i,j,k)+delp(i,j+1,k))
+             kqdtdy(i,j,k)=rarea(i,j)*tmp*tmp1*(vt(i,j+1)-vt(i,j))
+          enddo
+       enddo
+       do j=js-1,je
+          do i=is,ie
+             vt(i,j)=kqdtdy(i,j,k)*dx(i,j)
+          enddo
+       enddo
+       do j=js,je
+          do i=is,ie
+             dkqdtdydy(i,j,k)=rarea(i,j)*(vt(i,j)-vt(i,j-1))
+          enddo
+       enddo
+!-------------------------------------
+       do j=js,je
+          do i=is-1,ie+1
+             ut(i,j)=q(i,j,k,sgs_tke)*dy(i,j)
+          enddo
+       enddo
+       do j=js,je
+          do i=is-1,ie
+             tmp = 0.5*(dku3d_e(i,j,k)+dku3d_e(i+1,j,k))
+             tmp1 = 0.5*(delp(i,j,k)+delp(i+1,j,k))
+             kqdtdx(i,j,k)=rarea(i,j)*tmp*tmp1*(ut(i+1,j)-ut(i,j))
+          enddo
+       enddo
+       do j=js,je
+          do i=is-1,ie
+             ut(i,j)=kqdtdx(i,j,k)*dy(i,j)
+          enddo
+       enddo
+       do j=js,je
+          do i=is,ie
+             dkqdtdxdx(i,j,k)=rarea(i,j)*(ut(i,j)-ut(i-1,j))
+          enddo
+       enddo
+!-------------------------------------
+       do j=js,je
+       do i=is,ie
+         deform_4(i,j,k,sgs_tke)=dkqdtdxdx(i,j,k)+dkqdtdydy(i,j,k)
+         deform_4(i,j,k,sgs_tke)=deform_4(i,j,k,sgs_tke)/delp(i,j,k)
+       enddo
+       enddo
+   enddo ! z loop
+   endif
 
 end subroutine diff3d
 
